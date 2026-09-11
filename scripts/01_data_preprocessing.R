@@ -158,7 +158,7 @@ write.csv(sparsity_master, "output/tables/eda_sparsity_check.csv", row.names = F
 # Plot of Empirical log rates with CIs to identify relationship between categorical covariates and response and investigate which categories can be merged (similar log-rates and overlapping CIs)
 
 # Helper function for empirical log rates regarding poisson model
-plot_poisson_eda <- function(df, grouping_var, var_label) {
+plot_poisson_eda <- function(df, grouping_var, var_label, alpha = 0.05) {
   df %>%
     group_by({{ grouping_var }}) %>%
     summarise(
@@ -167,12 +167,12 @@ plot_poisson_eda <- function(df, grouping_var, var_label) {
       .groups = "drop"
     ) %>%
     mutate(
-      # Calculate CIs
+      # Calculate approximate 100 * (1- \alpha) % CI based on delta method
       rate = Y_j / t_j,
       emp_log_rate = log(rate),
-      se_rate = sqrt(Y_j / (t_j^2)),
-      ci_lower = log(rate - qnorm(0.975) * se_rate),
-      ci_upper = log(rate + qnorm(0.975) * se_rate)
+      se_rate = 1 / sqrt(Y_j),
+      ci_lower = emp_log_rate - qnorm(1 - alpha / 2) * se_rate,
+      ci_upper = emp_log_rate + qnorm(1 - alpha / 2) * se_rate
     ) %>%
     ggplot(aes(x = {{ grouping_var }}, y = emp_log_rate, group = 1)) +
     geom_line(color = "#2c3e50", linetype = "dashed", alpha = 0.6) +
@@ -185,7 +185,7 @@ plot_poisson_eda <- function(df, grouping_var, var_label) {
 }
 
 # Helper function for Poisson EDA Tables
-generate_poisson_table <- function(df, grouping_var, var_name) {
+generate_poisson_table <- function(df, grouping_var, var_name, alpha = 0.05) {
   df %>%
     group_by({{ grouping_var }}) %>%
     summarise(
@@ -195,11 +195,11 @@ generate_poisson_table <- function(df, grouping_var, var_name) {
     ) %>%
     mutate(
       rate = Y_j / t_j,
-      se_rate = sqrt(Y_j / (t_j^2)),
+      se_rate = 1 /sqrt( Y_j),
       
       `Empir. Log-Rate` = round(log(rate), 3),
-      `L` = round(log(rate - qnorm(0.975) * se_rate), 3),
-      `U` = round(log(rate + qnorm(0.975) * se_rate), 3)
+      `L` = round(mp_log_rate - qnorm(1 - alpha / 2) * se_rate, 3),
+      `U` = round(emp_log_rate + qnorm(1 - alpha / 2) * se_rate, 3)
     ) %>%
     select({{ grouping_var }}, `Empir. Log-Rate`, Y_j, t_j, L, U) %>%
     mutate(Variable = var_name, .before = 1)
@@ -265,7 +265,7 @@ p_freq_make_merged  <- plot_poisson_eda(insurance, Make_merged, "Make (Car Model
 
 # Interaction Plots
 # Helper function for Poisson Interaction plots (Empirical Log-Rate)
-plot_poisson_interaction <- function(df, x_var, group_var, x_label, legend_label) {
+plot_poisson_interaction <- function(df, x_var, group_var,alpha = 0.05, x_label, legend_label) {
   
   # Grouping and calculating metrics
   agg_data <- df %>%
@@ -281,9 +281,9 @@ plot_poisson_interaction <- function(df, x_var, group_var, x_label, legend_label
       # Calculate CI and log rate
       rate = Y_j / t_j,
       emp_log_rate = log(rate),
-      se_rate = sqrt(Y_j / (t_j^2)),
-      ci_lower = log(rate - qnorm(0.975) * se_rate),
-      ci_upper = log(rate + qnorm(0.975) * se_rate)
+      se_rate = 1 / sqrt( Y_j ),
+      ci_lower = emp_log_rate - qnorm(1 - alpha / 2) * se_rate,
+      ci_upper = emp_log_rate + qnorm(1 - alpha / 2) * se_rate
     )
   
   # Doge lines for better overview
@@ -367,7 +367,7 @@ comparison_inter_Make_Bonus <- p_inter_Make_Bonus + p_inter_Make_merged_Bonus + 
 
 
 # Table of Empirical Log Rates for Interactions
-generate_poisson_interaction_table <- function(df, var1, var2, name_var1, name_var2) {
+generate_poisson_interaction_table <- function(df, var1, var2, name_var1, name_var2, alpha = 0.05) {
   df %>%
     group_by({{ var1 }}, {{ var2 }}) %>%
     summarise(
@@ -380,11 +380,11 @@ generate_poisson_interaction_table <- function(df, var1, var2, name_var1, name_v
     # Calculate CIs
     mutate(
       rate = Y_j / t_j,
-      se_rate = sqrt(Y_j / (t_j^2)),
+      se_rate = 1 /sqrt( Y_j),
       
       `Empir. Log-Rate` = round(log(rate), 3),
-      `L` = round(log(rate - qnorm(0.975) * se_rate), 3),
-      `U` = round(log(rate + qnorm(0.975) * se_rate), 3)
+      `L` = round(emp_log_rate - qnorm(1 - alpha / 2) * se_rate, 3),
+      `U` = round(emp_log_rate + qnorm(1 - alpha / 2) * se_rate, 3)
     ) %>%
     select({{ var1 }}, {{ var2 }}, `Empir. Log-Rate`, Y_j, t_j, L, U) %>%
     # Adjustment of format
@@ -616,6 +616,7 @@ AIC(model_final_without_interaction, model_full_inter_stepwise_backward_bic, mod
 model_main <-  model_full_inter_stepwise_backward_bic
 summary(model_main)
 
+# Model Diagnostic ----------------------------
 
 # Model integrity check (MLE property)
 # In Poisson GLM with log-link and intercept, the score equation yields that sum of fitted values = sum of obs. values
@@ -625,10 +626,40 @@ sum_fitted_claims <- sum(fitted(model_main))
 as.integer(sum_fitted_claims) == as.integer(sum_observed_claims) # TRUE
 
 
+# Residual Deviance Test (Goodness of fit, comparison with saturated model): 
+# Reject H_0: Model assumptions for specified GLM are satisfied vs. H_1: not H_0 at level of alpha
 
-# Model Diagnostic ----------------------------
+# Degrees of freedom
+df_res <- df.residual(model_main)
+# Test statistic
+D_stat <- deviance(model_main)
+dev_residuals <- resid(model_main, type = "deviance")
+D_raw_stat <- sum(dev_residuals^2)
 
-# Overdispersion
+# Integrity check
+tol <- 1.5e-8
+abs(D_stat - D_raw_stat) < tol # TRUE
+
+p_val_Deviance <- pchisq(D_stat, df = df_res, lower.tail = FALSE) # 1.996e-19 < 5%
+# Interpretation: Reject the hypothesis that the poisson model assumptions for the regarded model are satisfied at level of 5%. 
+
+
+# Rule of thumb: D > n - p (Overdispersion)?
+D_stat / df_res # 1.30
+# Observation: Overdispersion might be present, but need more precise checks
+
+
+# Pearson Chi-Square Test
+# Reject H_0: Specified Poisson model is adequate, i.e., equidispersion holds vs H_1: Not H_0
+# Under H_0, the pearson \chi^2 statistic follows asymptotically (i.e., for large n) a \chi^2_{n-p} distribution.
+pearson_residuals <- resid(model_main, type = "pearson") # pearson_residuals^2 = squared deviation / theoretical variance
+X2_pearson <- sum(pearson_residuals^2)
+
+# Calculate the one-sided p-value
+p_val_pearson <- pchisq(X2_pearson, df = df_res, lower.tail = FALSE) # 3.69e-22 < 5%
+# Conclusion: Reject the Null Hypothesis, that the specified model is adequate at significance level of 5%. According to the result of this hypothesis test, over- or underdispersion might be present. Due to the rule of thumb, overdispersion is more likely. 
+
+# Overdispersion test, based on score / likelihood ratio test for GLMs (ref: https://www.math.cit.tum.de/fileadmin/w00ccg/math/Forschung/forschungsgruppen/statistics/academics/lec7.pdf, pp. 21-22)
 # Dean (1992) score test for overdispersion
 # Model: Additive random effect on log scale: \theta_\star  = \theta + Z_i, \theta = Offset_i + x_i \cdot \beta with  Z_i iid, E[Z_i] = 0 and Var(Z_i) = \tau \in \mathbb{R}_{\ge 0}.
 # Reject H0: tau = 0 vs H1: tau > 0 at level \alpha, if T_s > \chi^2_{1, 1- \alpha}. 
@@ -669,6 +700,111 @@ test_dean_overdispersion <- function(poisson_model, alpha = 0.05) {
 
 test_dean_overdispersion(model_main)
 # Conclusion: Reject H0 at 5% significance level. The test provides statistical evidence for presence of overdispersion in the poisson model.
+
+# Handling Overdispersion
+# Theoretical:
+# It holds: \theta_\star  = \theta + Z_i \iff \mu_i^\star \coloneqq \exp(\theta_\star) = \mu_i * Z_i^\prime, whereby Z_i^\prime = \exp(Z_i) and \mu_i = \exp(\theta_i), i.e., Z_i^\prime is multiplicative effect on mean scale.
+# Assumption: Z_i^\prime are iid Gamma(\nu, \nu) distributed, i.e., mean 1 and variance 1 / \nu .
+# This implies (via integrating the conditional Poisson distribution over Gamma mixing distribution):
+# Y_i \sim nb(\mu_i, \nu), in particular E[Y_i] = \mu_i and Var[Y_i] = \mu_i (1 + \mu_i / \nu)
+# Note: Since \nu is unkown, this adjusted specification does not follow a GLM.
+
+# Practical:
+#glm.nb estimates \nu and regression coefficients via alternating MLE through Scores Function of NB-distribution.
+model_nb <- MASS::glm.nb(
+  formula = formula(model_main),
+  data = insurance,
+  link = log,
+  x = TRUE
+)
+
+# Model comparison: Poisson vs NB (nested models)
+
+# Instead of using deviance(model_main) - deviance(model_nb) for test statistic, use 2(LL_full - LL_reduced), which is mathematically equivalent, since D = -2(LL_Model - LL_Saturated).
+# Reason: the R functions glm and glm.nb calculate Deviance not equally due to difference in parameters w.r.t. underlying family distribution (Poisson(\mu_i) vs NB(\mu_i, \nu))
+
+log_like_poisson <- as.numeric(logLik(model_main))
+log_like_NB <- as.numeric(logLik(model_nb))
+
+D_stat_poisson <- deviance(model_main)
+D_stat_NB <- deviance(model_nb)
+
+log_like_poisson_sat <- (log_like_poisson + D_stat_poisson) / 2
+log_like_NB_sat <- (log_like_NB + D_stat_NB) / 2
+
+tol <- 1.5e-8
+abs(log_like_poisson_sat - log_like_NB_sat) < tol # FALSE, result is 214.98
+
+
+# Likelihood Ratio Test / Partial Deviance Test
+# Reject H_0: Dispersion parameter 1 / \nu = 0 vs H_1: not H_0 at level \alpha
+# Under H_0, the test statistic LRT_stat is asymptotically \chi^2_1 distributed.
+LRT_stat <- 2 * (log_like_NB - log_like_poisson)
+
+# p- value: df = 1, since NB has one additional parameter \nu; lower.tail = FALSE, since one-sided test
+p_val_LRT <- pchisq(LRT_stat, df = 1, lower.tail = FALSE) # 3.25e-37 < 5%
+
+# Conclusion: According to the hypothesis test, reject that the dispersion parameter is 0. This indicates that the NB - model provides a more adequate fit.
+
+# Re-Calibration of Model Selection under Negative Binomial family ---------- < To Do>
+# Re Do EDA with NB Model - note: CI differ, but same link function - short interpretation
+# For this: Adjust helper function with additional method s.t. NB CIs are calculated.
+
+# The initial model selection via step()-function (forward / backward, AIC / BIC, Raw vs Merged) was performed under the assumption that the response follows a poisson family distribution. But such a model suffers from overdispersion, which influences the test statistics and favors complex models to absorb the discrepancy between theoretical variance and standard deviation. Hence, the model selection is re-executed under the assumption that the response has NB distribution.
+
+# Null model (intercept only)
+model_null_NB <- MASS::glm.nb(Claims ~ 1 + offset(log(Insured)), data = insurance, link = log, x = T)
+
+# Functional Form Check for NB
+
+# Kilometres
+nb_km_raw    <- update(model_null_NB, . ~ . + Kilometres)
+nb_km_merged <- update(model_null_NB, . ~ . + Kilometres_merged)
+
+
+
+# Make
+nb_make_raw    <- update(model_null_NB, . ~ . + Make)
+nb_make_merged <- update(model_null_NB, . ~ . + Make_merged)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
